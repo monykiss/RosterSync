@@ -1,0 +1,410 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SCHEDULER
+  INSTRUCTOR
+}
+
+enum WeekStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum SessionStatus {
+  SCHEDULED
+  NEEDS_COVER
+  COVER_PENDING
+  COVER_ASSIGNED
+  CANCELLED
+}
+
+enum UnavailabilityType {
+  HOLIDAY
+  SICK
+  PERSONAL
+  OTHER
+}
+
+enum OpportunityStatus {
+  OPEN
+  OFFERED
+  ACCEPTED
+  ASSIGNED
+  EXPIRED
+  CANCELLED
+}
+
+enum OfferResponse {
+  PENDING
+  ACCEPT
+  DECLINE
+}
+
+enum NotificationType {
+  COVER_OPPORTUNITY
+  COVER_ASSIGNED
+  SCHEDULE_PUBLISHED
+  SYNC_FAILED
+}
+
+enum WixMode {
+  STUB
+  LIVE
+}
+
+enum WixJobType {
+  UPSERT_SESSION
+  CANCEL_SESSION
+  RECONCILE_PULL
+}
+
+enum WixJobStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  instructorId String?  @unique
+  instructor   Instructor? @relation(fields: [instructorId], references: [id])
+  createdAt    DateTime @default(now())
+  notifications Notification[]
+  auditLogs    AuditLog[] @relation("AuditActor")
+  
+  coverRequests CoverOpportunity[]
+}
+
+model Studio {
+  id          String   @id @default(cuid())
+  name        String
+  timezone    String   // IANA, e.g. "America/Puerto_Rico"
+  wixSiteId   String?
+  wixAccountId String?
+  createdAt   DateTime @default(now())
+
+  classTypes  ClassType[]
+  instructors Instructor[]
+  slots       RecurringSlotTemplate[]
+  weeks       Week[]
+  sessions    SessionOccurrence[]
+  rules       CompatibilityRule[]
+  integrations WixIntegration[]
+  syncJobs    WixSyncJob[]
+  auditLogs   AuditLog[]
+}
+
+model ClassType {
+  id          String   @id @default(cuid())
+  studioId    String
+  name        String
+  description String?
+  tags        String[] @default([])
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  studio      Studio   @relation(fields: [studioId], references: [id])
+  skills      InstructorSkill[]
+  baseSlots   RecurringSlotTemplate[] @relation("SlotDefaultClassType")
+  baseSessions SessionOccurrence[] @relation("SessionBaseClassType")
+  overrideSessions SessionOccurrence[] @relation("SessionOverrideClassType")
+  
+  rulesFrom         CompatibilityRule[] @relation("RuleFromClassType")
+  rulesTo           CompatibilityRule[] @relation("RuleToClassType")
+
+  @@unique([studioId, name])
+  @@index([studioId])
+}
+
+model Instructor {
+  id          String   @id @default(cuid())
+  studioId    String
+  fullName    String
+  email       String
+  phone       String?
+  isActive    Boolean  @default(true)
+  maxWeeklySlots Int?
+  createdAt   DateTime @default(now())
+
+  studio      Studio   @relation(fields: [studioId], references: [id])
+  skills      InstructorSkill[]
+  unavailability Unavailability[]
+  baseSlots   RecurringSlotTemplate[] @relation("SlotDefaultInstructor")
+  baseSessions SessionOccurrence[] @relation("SessionBaseInstructor")
+  overrideSessions SessionOccurrence[] @relation("SessionOverrideInstructor")
+  coverOffers CoverOffer[]
+  
+  user        User?
+
+  @@unique([studioId, email])
+  @@index([studioId, isActive]) // cover engine active instructor queries
+}
+
+model InstructorSkill {
+  id           String   @id @default(cuid())
+  instructorId String
+  classTypeId  String
+  canTeach     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  instructor Instructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  classType  ClassType  @relation(fields: [classTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([instructorId, classTypeId])
+  @@index([classTypeId])
+  @@index([instructorId, canTeach]) // cover engine skill lookups
+}
+
+model CompatibilityRule {
+  id            String   @id @default(cuid())
+  studioId      String
+  fromClassTypeId String
+  toClassTypeId   String
+  priority      Int
+  isEnabled     Boolean  @default(true)
+  reasonTemplate String?
+  createdAt     DateTime @default(now())
+
+  studio       Studio   @relation(fields: [studioId], references: [id])
+  fromClassType ClassType @relation("RuleFromClassType", fields: [fromClassTypeId], references: [id])
+  toClassType   ClassType @relation("RuleToClassType", fields: [toClassTypeId], references: [id])
+
+  @@unique([studioId, fromClassTypeId, toClassTypeId])
+  @@index([studioId, fromClassTypeId])
+}
+
+model RecurringSlotTemplate {
+  id               String   @id @default(cuid())
+  studioId         String
+  name             String
+  weekday          Int      // 0-6
+  startTime        String   // "HH:MM"
+  durationMins     Int
+  locationLabel    String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  defaultClassTypeId String
+  defaultInstructorId String?
+
+  studio           Studio   @relation(fields: [studioId], references: [id])
+  defaultClassType ClassType @relation("SlotDefaultClassType", fields: [defaultClassTypeId], references: [id])
+  defaultInstructor Instructor? @relation("SlotDefaultInstructor", fields: [defaultInstructorId], references: [id])
+
+  sessions         SessionOccurrence[]
+
+  @@index([studioId, weekday])
+}
+
+model Week {
+  id              String    @id @default(cuid())
+  studioId        String
+  weekStartDate   DateTime  // stored as date at 00:00:00 UTC or local normalized
+  status          WeekStatus @default(DRAFT)
+  publishedAt     DateTime?
+  publishedBy     String?
+  publishVersion  Int       @default(0)
+  weekHash        String?
+  createdAt       DateTime  @default(now())
+
+  studio          Studio    @relation(fields: [studioId], references: [id])
+  sessions        SessionOccurrence[]
+
+  @@unique([studioId, weekStartDate])
+  @@index([studioId, status])
+  @@index([studioId, weekHash])
+}
+
+model SessionOccurrence {
+  id              String   @id @default(cuid())
+  studioId        String
+  weekId          String
+  slotTemplateId  String
+
+  sessionDate     DateTime // date
+  startDateTimeUTC DateTime
+  endDateTimeUTC   DateTime
+
+  status          SessionStatus @default(SCHEDULED)
+
+  baseClassTypeId String
+  baseInstructorId String?
+  overrideClassTypeId String?
+  overrideInstructorId String?
+  overrideReason  String?
+
+  // Wix mirror fields
+  wixEventId       String?
+  wixInstanceId    String?
+  wixRevision      String?
+  lastSyncedHash   String?
+  lastSyncAt       DateTime?
+
+  createdAt       DateTime @default(now())
+
+  studio          Studio  @relation(fields: [studioId], references: [id])
+  week            Week    @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  slotTemplate    RecurringSlotTemplate @relation(fields: [slotTemplateId], references: [id])
+
+  baseClassType   ClassType @relation("SessionBaseClassType", fields: [baseClassTypeId], references: [id])
+  overrideClassType ClassType? @relation("SessionOverrideClassType", fields: [overrideClassTypeId], references: [id])
+
+  baseInstructor  Instructor? @relation("SessionBaseInstructor", fields: [baseInstructorId], references: [id])
+  overrideInstructor Instructor? @relation("SessionOverrideInstructor", fields: [overrideInstructorId], references: [id])
+
+  coverOpportunity CoverOpportunity?
+
+  @@unique([slotTemplateId, startDateTimeUTC]) // prevents duplicates on regenerate
+  @@index([studioId, weekId])
+  @@index([studioId, startDateTimeUTC]) // date-range queries in planner + sessions list
+  @@index([status])
+  @@index([baseInstructorId])
+  @@index([overrideInstructorId])
+}
+
+model Unavailability {
+  id              String   @id @default(cuid())
+  instructorId    String
+  startDateTimeUTC DateTime
+  endDateTimeUTC   DateTime
+  type            UnavailabilityType
+  note            String?
+  createdAt       DateTime @default(now())
+
+  instructor Instructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@index([instructorId, startDateTimeUTC])
+}
+
+model CoverOpportunity {
+  id              String   @id @default(cuid())
+  sessionId       String   @unique
+  requestedByUserId String
+  status          OpportunityStatus @default(OPEN)
+  createdAt       DateTime @default(now())
+
+  session         SessionOccurrence @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  requestedBy     User @relation(fields: [requestedByUserId], references: [id])
+  offers          CoverOffer[]
+
+  @@index([status])
+}
+
+model CoverOffer {
+  id             String   @id @default(cuid())
+  opportunityId  String
+  instructorId   String
+  offeredAt      DateTime @default(now())
+  respondedAt    DateTime?
+  response       OfferResponse @default(PENDING)
+  rankScore      Float?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  opportunity    CoverOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  instructor     Instructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, instructorId])
+  @@index([instructorId, response]) // instructor cover marketplace queries
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+}
+
+model WixIntegration {
+  id        String   @id @default(cuid())
+  studioId  String
+  mode      WixMode  @default(STUB)
+  wixSiteId String?
+  wixAppInstanceId String?
+  accessTokenEncrypted String?
+  refreshTokenEncrypted String?
+  createdAt DateTime @default(now())
+
+  studio    Studio   @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@unique([studioId])
+}
+
+model WixSyncJob {
+  id              String    @id @default(cuid())
+  studioId        String
+  sessionId       String?
+  jobType         WixJobType
+  idempotencyKey  String   @unique
+  status          WixJobStatus @default(PENDING)
+  attempts        Int       @default(0)
+  lastError       String?
+  correlationId   String?
+  payloadJson     Json?
+  payloadHash     String?
+  publishVersion  Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  studio          Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+
+  @@index([studioId, status])
+  @@index([correlationId])
+  @@index([sessionId])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  studioId      String
+  actorUserId   String
+  entityType    String
+  entityId      String
+  action        String
+  beforeJson    Json?
+  afterJson     Json?
+  reason        String?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  studio        Studio   @relation(fields: [studioId], references: [id])
+  actor         User     @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([studioId, createdAt])
+  @@index([correlationId])
+  @@index([entityType, entityId])
+}
+
+model PublishSnapshot {
+  id              String   @id @default(cuid())
+  studioId        String
+  weekId          String
+  publishVersion  Int
+  weekHash        String
+  effectiveJson   Json
+  diffSummary     Json?
+  publishedBy     String
+  publishedAt     DateTime @default(now())
+  correlationId   String?
+
+  @@unique([studioId, weekId, publishVersion])
+  @@index([studioId, weekHash])
+}

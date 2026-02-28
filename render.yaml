@@ -1,0 +1,67 @@
+services:
+  - type: web
+    name: rostersync-api
+    runtime: node
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate && pnpm --filter api build
+    startCommand: node apps/api/dist/main.js
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rostersync-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: rostersync-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AUTH_MODE
+        value: DEMO
+      - key: DEMO_USER_EMAIL
+        value: admin@rostersyncos.io
+      - key: WIX_MODE
+        value: STUB
+      - key: WIX_STUB_FAIL_RATE
+        value: "0"
+
+  - type: web
+    name: rostersync-web
+    runtime: node
+    plan: starter
+    region: oregon
+    healthCheckPath: /
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter web build
+    startCommand: node apps/web/node_modules/next/dist/bin/next start -H 0.0.0.0 -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+
+  - type: keyvalue
+    name: rostersync-redis
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+databases:
+  - name: rostersync-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
+    ipAllowList: []
