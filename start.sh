@@ -4,16 +4,15 @@ set -e
 cd /app/apps/api
 
 echo "Running Prisma migrations..."
-# Find prisma binary in the app-local or workspace-level pnpm layout.
-PRISMA_BIN=$(
-  (find ./node_modules ../../node_modules -maxdepth 5 -path "*/prisma@*/build/index.js" 2>/dev/null || true) \
-    | head -1
-)
-if [ -n "$PRISMA_BIN" ]; then
+PRISMA_BIN="../../node_modules/.pnpm/prisma@5.22.0/node_modules/prisma/build/index.js"
+if [ ! -f "$PRISMA_BIN" ]; then
+  PRISMA_BIN=$(find ../../node_modules ./node_modules -maxdepth 6 -path "*/prisma@*/build/index.js" 2>/dev/null | head -1)
+fi
+if [ -n "$PRISMA_BIN" ] && [ -f "$PRISMA_BIN" ]; then
   node "$PRISMA_BIN" migrate deploy --schema ./prisma/schema.prisma
   echo "Migrations complete."
 else
-  echo "Prisma binary not found, skipping migrations."
+  echo "WARNING: Prisma binary not found, skipping migrations."
 fi
 
 echo "Starting API server..."
