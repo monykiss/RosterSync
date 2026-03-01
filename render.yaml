@@ -6,7 +6,7 @@ services:
     region: oregon
     healthCheckPath: /health
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate && pnpm --filter api build
-    startCommand: node apps/api/dist/main.js
+    startCommand: node apps/api/dist/src/main.js
     envVars:
       - key: NODE_ENV
         value: staging

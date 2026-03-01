@@ -1,0 +1,31 @@
+app = "rostersync-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[env]
+  NODE_ENV = "staging"
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  AUTH_MODE = "DEMO"
+  WIX_MODE = "STUB"
+  CORS_ORIGINS = "https://rostersync-sigma.vercel.app,https://rostersync.vercel.app"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  grace_period = "15s"
+  interval = "30s"
+  method = "GET"
+  path = "/health"
+  timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
